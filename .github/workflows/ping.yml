@@ -1,0 +1,15 @@
+name: ping
+on:
+  push:
+    paths: ["ping.txt"]
+permissions:
+  contents: write
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          curl -s -o /dev/null -w "%{http_code}" https://oauth2.googleapis.com/token > ping_result.txt || true
+          git config user.name bot; git config user.email bot@users.noreply.github.com
+          git add ping_result.txt; git commit -m "ping result"; git push
