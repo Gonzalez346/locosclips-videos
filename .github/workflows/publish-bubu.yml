@@ -1,0 +1,31 @@
+name: Publicar Bubu en YouTube
+on:
+  workflow_dispatch: {}
+  schedule:            # 6 al día, hora Guinea Ecuatorial (UTC+1): 08:00, 10:30, 13:00, 15:30, 18:00, 20:30
+    - cron: "0 7 * * *"
+    - cron: "30 9 * * *"
+    - cron: "0 12 * * *"
+    - cron: "30 14 * * *"
+    - cron: "0 17 * * *"
+    - cron: "30 19 * * *"
+permissions:
+  contents: write
+concurrency: publish-bubu
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install google-api-python-client google-auth
+      - name: Subir el siguiente video
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python scripts/publish_next.py
+      - name: Guardar lo publicado
+        run: |
+          git config user.name "bubu-bot"; git config user.email "bubu-bot@users.noreply.github.com"
+          git add bubu/published.json && git commit -m "Publicado" && git push || echo "sin cambios"
