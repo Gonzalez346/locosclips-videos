@@ -4,7 +4,7 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
   push:
-    paths: ["cola/**", "auth/code.txt", "auth/client.enc"]
+    paths: ["cola/**", "auth/code.txt", "auth/client.enc", "auth/ajustes.json", "scripts/yt.py"]
 permissions:
   contents: write
 concurrency:

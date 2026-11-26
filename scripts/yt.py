@@ -68,17 +68,83 @@ if os.path.exists("publicados.json"):
 else:
     pub = []
 
-# 3) Publicar lo que toque
+# 3) Configuración de subida (según la guía: oculto primero, público a la hora buena)
+ADELANTO = datetime.timedelta(minutes=90)   # se sube en OCULTO 90 min antes para que YouTube lo analice
+LISTAS = {
+    "Historias reales increíbles": "Historias reales tan raras que parecen inventadas: robos, soldados olvidados, supervivientes y personajes que cambiaron la historia. Un vídeo nuevo cada día.",
+    "Récords y casos insólitos": "Récords imposibles y casos insólitos de la vida real y del deporte: lo que pasó de verdad, contado en menos de un minuto. Un vídeo nuevo cada día.",
+}
+def jload(p, d):
+    return json.load(open(p)) if os.path.exists(p) else d
+def jsave(p, o):
+    json.dump(o, open(p, "w"), ensure_ascii=False, indent=1)
+def estado_video(privacy, m):
+    return {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "containsSyntheticMedia": bool(m.get("ia", False)),
+            "embeddable": True, "publicStatsViewable": True, "license": "youtube"}
+def snippet(m):
+    return {"title": m["title"], "description": m.get("description", ""), "tags": m.get("tags", []), "categoryId": m.get("categoria", "24"),
+            "defaultLanguage": "es", "defaultAudioLanguage": "es"}
+listas = jload("auth/listas.json", {})
+def lista_id(nombre):
+    if nombre in listas: return listas[nombre]
+    _, b = api("GET", "https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=50", AT)
+    for it in json.loads(b).get("items", []):
+        if it["snippet"]["title"] == nombre: listas[nombre] = it["id"]
+    if nombre not in listas:
+        _, b = api("POST", "https://www.googleapis.com/youtube/v3/playlists?part=snippet,status", AT,
+                   {"snippet": {"title": nombre, "description": LISTAS.get(nombre, ""), "defaultLanguage": "es"}, "status": {"privacyStatus": "public"}})
+        listas[nombre] = json.loads(b)["id"]
+    jsave("auth/listas.json", listas); return listas[nombre]
+def a_lista(video_id, nombre):
+    if not nombre: return
+    try:
+        api("POST", "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", AT,
+            {"snippet": {"playlistId": lista_id(nombre), "resourceId": {"kind": "youtube#video", "videoId": video_id}}})
+    except urllib.error.HTTPError as e:
+        log("No pude añadir a la lista:", e.code, e.read()[:200])
+
+# 3a) Ajustes puntuales a vídeos ya subidos (auth/ajustes.json)
+aj = jload("auth/ajustes.json", [])
+if aj:
+    for a in aj:
+        try:
+            parts = "status" + (",snippet" if "title" in a else "")
+            body = {"id": a["id"], "status": estado_video(a.get("privacy", "public"), a)}
+            if "title" in a: body["snippet"] = snippet(a)
+            api("PUT", "https://www.googleapis.com/youtube/v3/videos?part=" + parts, AT, body)
+            a_lista(a["id"], a.get("lista"))
+            log("Ajustado", a["id"])
+        except urllib.error.HTTPError as e:
+            status("ERROR ajustando %s: %s %s" % (a["id"], e.code, e.read()[:300].decode(errors="ignore")))
+    os.remove("auth/ajustes.json")
+
 now = datetime.datetime.now(datetime.timezone.utc)
+
+# 3b) Pasar a PÚBLICO los ocultos cuya hora llegó
+ocultos = jload("ocultos.json", [])
+quedan = []
+for o in ocultos:
+    if datetime.datetime.fromisoformat(o["publicar"]) > now:
+        quedan.append(o); continue
+    try:
+        api("PUT", "https://www.googleapis.com/youtube/v3/videos?part=status", AT, {"id": o["id"], "status": estado_video("public", o)})
+    except urllib.error.HTTPError as e:
+        status("ERROR pasando a público %s: %s %s" % (o["id"], e.code, e.read()[:300].decode(errors="ignore"))); quedan.append(o); continue
+    pub.append({"id": o["id"], "titulo": o["title"], "url": "https://www.youtube.com/watch?v=" + o["id"], "privacidad_pedida": "public",
+                "subido_oculto_utc": o.get("subido_utc"), "publicado_utc": now.isoformat()})
+    jsave("publicados.json", pub)
+    status("Publicado (oculto → público): %s → %s" % (o["title"], o["id"]))
+jsave("ocultos.json", quedan)
+
+# 3c) Subir en OCULTO lo que se publica en los próximos 90 min
 for mf in sorted(glob.glob("cola/*.json")):
     m = json.load(open(mf))
     when = datetime.datetime.fromisoformat(m.get("publicar", "2000-01-01T00:00:00+00:00"))
-    if when > now:
+    if when - ADELANTO > now:
         log("Pendiente:", mf, "a las", when.isoformat()); continue
     vid = os.path.join("cola", m["video"])
-    meta = {"snippet": {"title": m["title"], "description": m.get("description", ""), "tags": m.get("tags", []), "categoryId": "24",
-                        "defaultLanguage": "es", "defaultAudioLanguage": "es"},
-            "status": {"privacyStatus": m.get("privacy", "public"), "selfDeclaredMadeForKids": False}}
+    privacy = "unlisted" if when > now else m.get("privacy", "public")
+    meta = {"snippet": snippet(m), "status": estado_video(privacy, m)}
     size = os.path.getsize(vid)
     try:
         h, _ = api("POST", "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status&notifySubscribers=true",
@@ -88,8 +154,15 @@ for mf in sorted(glob.glob("cola/*.json")):
         with urllib.request.urlopen(req, timeout=900) as r: res = json.load(r)
     except urllib.error.HTTPError as e:
         status("ERROR subiendo %s: %s %s" % (mf, e.code, e.read()[:400].decode(errors="ignore"))); continue
-    pub.append({"id": res["id"], "titulo": m["title"], "url": "https://www.youtube.com/watch?v=" + res["id"], "privacidad_pedida": meta["status"]["privacyStatus"],
-                "privacidad_devuelta": res.get("status", {}).get("privacyStatus"), "publicado_utc": now.isoformat()})
-    json.dump(pub, open("publicados.json", "w"), ensure_ascii=False, indent=1)
+    a_lista(res["id"], m.get("lista"))
+    if privacy == "unlisted":
+        quedan.append({"id": res["id"], "title": m["title"], "publicar": when.isoformat(), "ia": m.get("ia", False),
+                       "subido_utc": now.isoformat(), "privacidad_devuelta": res.get("status", {}).get("privacyStatus")})
+        jsave("ocultos.json", quedan)
+        status("Subido en OCULTO: %s → %s (público a las %s UTC)" % (m["title"], res["id"], when.strftime("%H:%M")))
+    else:
+        pub.append({"id": res["id"], "titulo": m["title"], "url": "https://www.youtube.com/watch?v=" + res["id"], "privacidad_pedida": privacy,
+                    "privacidad_devuelta": res.get("status", {}).get("privacyStatus"), "publicado_utc": now.isoformat()})
+        jsave("publicados.json", pub)
+        status("Publicado: %s → %s" % (m["title"], res["id"]))
     os.remove(vid); os.remove(mf)
-    status("Publicado: %s → %s" % (m["title"], res["id"]))
