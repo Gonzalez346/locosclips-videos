@@ -9,6 +9,8 @@ from googleapiclient.http import MediaFileUpload
 done_path = "bubu/published.json"
 done = json.load(open(done_path)) if os.path.exists(done_path) else []
 pending = [os.path.basename(p)[:-5] for p in sorted(glob.glob("bubu/schedule/*.json")) if os.path.basename(p)[:-5] not in done]
+if not all(os.environ.get(k) for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN")):
+    print("Faltan los secretos de YouTube; no se publica nada."); sys.exit(0)
 if not pending:
     print("Nada pendiente."); sys.exit(0)
 vid = pending[0]; meta = json.load(open(f"bubu/schedule/{vid}.json")); path = f"bubu/videos/{vid}.mp4"
