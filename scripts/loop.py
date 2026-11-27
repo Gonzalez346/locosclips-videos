@@ -17,11 +17,11 @@ def proximo():
         for o in json.load(open("ocultos.json")): ev.append(datetime.datetime.fromisoformat(o["publicar"]))
     return min(ev) if ev else None
 while True:
-    sh("python3 scripts/yt.py"); guardar()
+    sh("git pull --rebase -q origin main"); sh("python3 scripts/yt.py"); guardar()
     nx = proximo()
     if nx is None: print("Cola vacía"); break
     espera = (nx - datetime.datetime.now(UTC)).total_seconds() + 20
     if time.time() + max(0, espera) > FIN:
         print("Siguiente evento", nx, "fuera de esta ejecución; encadeno otra"); open(".seguir", "w").write("1"); break
     print("Esperando hasta", nx, flush=True)
-    time.sleep(max(0, espera))
+    time.sleep(min(max(0, espera), 600))  # revisa cambios cada 10 min como máximo
