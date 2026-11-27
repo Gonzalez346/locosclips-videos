@@ -4,26 +4,33 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
   push:
-    paths: ["cola/**", "auth/code.txt", "auth/client.enc", "auth/ajustes.json", "scripts/yt.py"]
+    paths: ["cola/**", "auth/code.txt", "auth/client.enc", "auth/ajustes.json", "scripts/yt.py", "scripts/loop.py"]
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: youtube
   cancel-in-progress: false
 jobs:
   publicar:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-      - name: Publicar vídeos pendientes
+      - name: Publicar vídeos (a la hora exacta)
         env:
           YT_KEY: ${{ secrets.YT_KEY }}
-        run: python3 scripts/yt.py
-      - name: Guardar cambios
         run: |
           git config user.name "locosclips-bot"
           git config user.email "locosclips-bot@users.noreply.github.com"
+          python3 scripts/loop.py
+      - name: Encadenar siguiente ejecución
+        if: ${{ hashFiles('.seguir') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: rm -f .seguir && gh workflow run youtube.yml --ref main
+      - name: Guardar cambios
+        run: |
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "Publicación automática [skip ci]"
